@@ -101,12 +101,16 @@ def apply_youtube_extractor_args(ydl_opts: dict) -> None:
     if po_token and visitor_data:
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'po_token': [f'web+{po_token}'],
+                # 1. Scope the token signature directly to the mweb context
+                'po_token': [f'mweb+{po_token}'],
                 'visitor_data': [visitor_data],
-                'fetch_pot': ['always']  # 💥 CRUCIAL: Forces yt-dlp to pass the token on the very first request
+                # 2. Force the client architecture to simulate Mobile Web requests
+                'player_client': ['mweb'],
+                # 3. Force proactive authorization mapping on the initial request
+                'fetch_pot': ['always']
             }
         }
-        print("💡 [yt-dlp] Authenticated request options applied successfully.")
+        print("💡 [yt-dlp] Authenticated mweb request options applied successfully.")
     else:
         print("⚠️ [yt-dlp] Running unauthenticated request (Token provider offline/sleeping).")
 
