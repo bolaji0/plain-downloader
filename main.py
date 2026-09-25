@@ -69,6 +69,7 @@ def list_formats(url: str = Query(..., description="Video page URL")):
         "skip_download": True, 
         "noplaylist": True,
         "extractor_args": youtube_extractor_args(),
+        "verbose": os.getenv("YTDLP_DEBUG") == "1",
     }
     
     try:
@@ -117,6 +118,7 @@ def download(
         "merge_output_format": "mp4",
         "noplaylist": True,
         "extractor_args": youtube_extractor_args(),
+        "verbose": os.getenv("YTDLP_DEBUG") == "1",
     }
 
     try:

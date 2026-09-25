@@ -10,6 +10,8 @@ The Dockerfile installs the Python provider plugin and Deno. It starts Uvicorn o
 
 ## Verify
 
+For temporary diagnostics, set `YTDLP_DEBUG=1` on the FastAPI Render service and redeploy. Run one request and inspect its Logs for `[debug]`, `[youtube]`, `[pot]`, `bgutil`, `WARNING` and `ERROR`; then remove `YTDLP_DEBUG` to reduce log volume. Do not share secrets, cookies, or private URLs from logs.
+
 After deploying, request `/formats?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DqSSOa7AjkGs` and inspect backend/provider logs. If player extraction still fails, enable yt-dlp verbose logging for a single request and check the loaded provider, connection errors and YouTube response. A PO token cannot repair an IP block by itself.
 
 Use the downloader only for content you have permission to download.
