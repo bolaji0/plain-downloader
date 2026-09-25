@@ -102,7 +102,8 @@ def apply_youtube_extractor_args(ydl_opts: dict) -> None:
         ydl_opts['extractor_args'] = {
             'youtube': {
                 'po_token': [f'web+{po_token}'],
-                'visitor_data': [visitor_data]
+                'visitor_data': [visitor_data],
+                'fetch_pot': ['always']  # 💥 CRUCIAL: Forces yt-dlp to pass the token on the very first request
             }
         }
         print("💡 [yt-dlp] Authenticated request options applied successfully.")
