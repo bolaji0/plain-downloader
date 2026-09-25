@@ -11,8 +11,10 @@ small HTTP endpoints around it for a personal web UI.
 
 import os
 import re
+import time
 import shutil
 import tempfile
+import httpx
 
 import yt_dlp
 from fastapi import FastAPI, HTTPException, Query
@@ -37,6 +39,15 @@ app.add_middleware(
 URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 MAX_URL_LENGTH = 2048
 
+# Configuration: Replace this with your actual Live token provider URL from Render
+TOKEN_PROVIDER_URL = "https://onrender.com"
+
+# Shared in-memory micro-cache to optimize performance for your 10 users
+token_cache = {
+    "po_token": None,
+    "visitor_data": None,
+    "expires_at": 0
+}
 
 def validate_url(url: str) -> None:
     if not url or len(url) > MAX_URL_LENGTH or not URL_PATTERN.match(url):
@@ -45,11 +56,62 @@ def validate_url(url: str) -> None:
             detail="Please provide a valid http(s) URL.",
         )
 
+def get_valid_youtube_tokens() -> tuple:
+    """
+    Fetches dynamic bot-proof tokens from the companion service.
+    Uses a 60-second local cache to optimize performance.
+    """
+    current_time = time.time()
+    
+    # Reuse cached token if it's still warm
+    if token_cache["po_token"] and current_time < token_cache["expires_at"]:
+        return token_cache["po_token"], token_cache["visitor_data"]
+    
+    try:
+        # The 2.x server layout requires a POST request to /get_pot
+        payload = {"content_binding": "visitor"}
+        
+        # 15-second timeout to allow the provider time to execute the challenge handshake
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(TOKEN_PROVIDER_URL, json=payload)
+            
+            if response.status_code == 200:
+                data = response.json()
+                po_token = data.get("po_token")
+                visitor_data = data.get("visitor_data")
+                
+                if po_token and visitor_data:
+                    # Update local cache
+                    token_cache["po_token"] = po_token
+                    token_cache["visitor_data"] = visitor_data
+                    token_cache["expires_at"] = current_time + 60  # Cache for 60 seconds
+                    return po_token, visitor_data
+            else:
+                print(f"Token Provider returned status {response.status_code}: {response.text}")
+                
+    except Exception as e:
+        # Graceful fallback: Log error, let yt-dlp run raw if the provider is sleeping
+        print(f"Failed to fetch fresh PO tokens: {e}")
+        
+    return token_cache["po_token"], token_cache["visitor_data"]
+
+def apply_youtube_extractor_args(ydl_opts: dict) -> None:
+    """Helper to cleanly inject live tokens into the yt-dlp options payload."""
+    po_token, visitor_data = get_valid_youtube_tokens()
+    if po_token and visitor_data:
+        ydl_opts['extractor_args'] = {
+            'youtube': {
+                'po_token': [f'web+{po_token}'],
+                'visitor_data': [visitor_data]
+            }
+        }
+        print("💡 [yt-dlp] Authenticated request options applied successfully.")
+    else:
+        print("⚠️ [yt-dlp] Running unauthenticated request (Token provider offline/sleeping).")
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
 
 @app.get("/formats")
 def list_formats(url: str = Query(..., description="Video page URL")):
@@ -57,6 +119,10 @@ def list_formats(url: str = Query(..., description="Video page URL")):
     validate_url(url)
 
     ydl_opts = {"quiet": True, "skip_download": True, "noplaylist": True}
+    
+    # Inject dynamic PO Token credentials
+    apply_youtube_extractor_args(ydl_opts)
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -86,7 +152,6 @@ def list_formats(url: str = Query(..., description="Video page URL")):
 
     return {"title": info.get("title", "video"), "formats": formats}
 
-
 @app.get("/download")
 def download(
     url: str = Query(...),
@@ -105,6 +170,9 @@ def download(
         "merge_output_format": "mp4",
         "noplaylist": True,
     }
+
+    # Inject dynamic PO Token credentials for the download phase
+    apply_youtube_extractor_args(ydl_opts)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
