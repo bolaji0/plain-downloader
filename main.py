@@ -39,8 +39,8 @@ app.add_middleware(
 URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 MAX_URL_LENGTH = 2048
 
-# Configuration: Replace this with your actual Live token provider URL from Render
-TOKEN_PROVIDER_URL = "https://my-yt-token-provider.onrender.com"
+# ⚡ FIXED: Added the mandatory '/get_pot' endpoint suffix
+TOKEN_PROVIDER_URL = "https://my-yt-token-provider.onrender.com/get_pot"
 
 # Shared in-memory micro-cache to optimize performance for your 10 users
 token_cache = {
@@ -68,10 +68,8 @@ def get_valid_youtube_tokens() -> tuple:
         return token_cache["po_token"], token_cache["visitor_data"]
     
     try:
-        # The 2.x server layout requires a POST request to /get_pot
         payload = {"content_binding": "visitor"}
         
-        # 15-second timeout to allow the provider time to execute the challenge handshake
         with httpx.Client(timeout=15.0) as client:
             response = client.post(TOKEN_PROVIDER_URL, json=payload)
             
@@ -90,7 +88,6 @@ def get_valid_youtube_tokens() -> tuple:
                 print(f"Token Provider returned status {response.status_code}: {response.text}")
                 
     except Exception as e:
-        # Graceful fallback: Log error, let yt-dlp run raw if the provider is sleeping
         print(f"Failed to fetch fresh PO tokens: {e}")
         
     return token_cache["po_token"], token_cache["visitor_data"]
@@ -101,18 +98,22 @@ def apply_youtube_extractor_args(ydl_opts: dict) -> None:
     if po_token and visitor_data:
         ydl_opts['extractor_args'] = {
             'youtube': {
-                # 1. Scope the token signature directly to the mweb context
                 'po_token': [f'mweb+{po_token}'],
                 'visitor_data': [visitor_data],
-                # 2. Force the client architecture to simulate Mobile Web requests
                 'player_client': ['mweb'],
-                # 3. Force proactive authorization mapping on the initial request
                 'fetch_pot': ['always']
             }
         }
         print("💡 [yt-dlp] Authenticated mweb request options applied successfully.")
     else:
-        print("⚠️ [yt-dlp] Running unauthenticated request (Token provider offline/sleeping).")
+        # ⚡ FIXED: Fallback configurations so unauthenticated routing targets mweb safety profiles
+        ydl_opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['mweb'],
+                'fetch_pot': ['always']
+            }
+        }
+        print("⚠️ [yt-dlp] Running baseline mweb configuration options (Token provider offline/sleeping).")
 
 @app.get("/health")
 def health():
@@ -123,9 +124,15 @@ def list_formats(url: str = Query(..., description="Video page URL")):
     """Return the title and a clean list of downloadable formats for a URL."""
     validate_url(url)
 
-    ydl_opts = {"quiet": True, "skip_download": True, "noplaylist": True}
+    # ⚡ FIXED: Added explicit plugin folder directory mapping array here
+    ydl_opts = {
+        "quiet": True, 
+        "skip_download": True, 
+        "noplaylist": True,
+        "plugin_dirs": [os.path.join(os.path.dirname(__file__), "yt-dlp-plugins")]
+    }
     
-    # Inject dynamic PO Token credentials
+    # Inject dynamic PO Token credentials cleanly
     apply_youtube_extractor_args(ydl_opts)
 
     try:
@@ -133,12 +140,11 @@ def list_formats(url: str = Query(..., description="Video page URL")):
             info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.DownloadError as e:
         raise HTTPException(status_code=422, detail=f"Couldn't read that URL: {e}")
-    except Exception:
-        raise HTTPException(status_code=500, detail="Unexpected error reading that URL.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error reading that URL: {str(e)}")
 
     formats = []
     for f in info.get("formats", []):
-        # Skip entries with no usable audio or video stream
         if f.get("vcodec") in (None, "none") and f.get("acodec") in (None, "none"):
             continue
         is_audio_only = f.get("vcodec") in (None, "none")
@@ -168,24 +174,17 @@ def download(
     tmpdir = tempfile.mkdtemp(prefix="plaindl_")
     outtmpl = os.path.join(tmpdir, "%(title).80s.%(ext)s")
 
-       ydl_opts = {
+    # ⚡ FIXED: Cleaned up spacing parameters and removed overlapping configurations 
+    ydl_opts = {
         "quiet": True,
         "format": format_id,
         "outtmpl": outtmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
-        # 💥 CRUCIAL FIX: Tells the engine exactly where to read the plugin folder
-        "plugin_dirs": [os.path.join(os.path.dirname(__file__), "yt-dlp-plugins")],
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["mweb"],
-                "fetch_pot": ["always"]
-            }
-        }
+        "plugin_dirs": [os.path.join(os.path.dirname(__file__), "yt-dlp-plugins")]
     }
 
-
-    # Inject dynamic PO Token credentials for the download phase
+    # Inject dynamic PO Token credentials for the download phase smoothly
     apply_youtube_extractor_args(ydl_opts)
 
     try:
@@ -193,8 +192,6 @@ def download(
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
 
-            # merge_output_format can change the final extension,
-            # so fall back to scanning the temp dir if needed.
             if not os.path.exists(filename):
                 candidates = os.listdir(tmpdir)
                 if not candidates:
