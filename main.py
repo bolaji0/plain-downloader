@@ -40,7 +40,7 @@ URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 MAX_URL_LENGTH = 2048
 
 # Configuration: Replace this with your actual Live token provider URL from Render
-TOKEN_PROVIDER_URL = "https://onrender.com"
+TOKEN_PROVIDER_URL = "https://my-yt-token-provider.onrender.com"
 
 # Shared in-memory micro-cache to optimize performance for your 10 users
 token_cache = {
