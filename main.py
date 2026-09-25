@@ -168,13 +168,22 @@ def download(
     tmpdir = tempfile.mkdtemp(prefix="plaindl_")
     outtmpl = os.path.join(tmpdir, "%(title).80s.%(ext)s")
 
-    ydl_opts = {
+       ydl_opts = {
         "quiet": True,
         "format": format_id,
         "outtmpl": outtmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
+        # 💥 CRUCIAL FIX: Tells the engine exactly where to read the plugin folder
+        "plugin_dirs": [os.path.join(os.path.dirname(__file__), "yt-dlp-plugins")],
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["mweb"],
+                "fetch_pot": ["always"]
+            }
+        }
     }
+
 
     # Inject dynamic PO Token credentials for the download phase
     apply_youtube_extractor_args(ydl_opts)
