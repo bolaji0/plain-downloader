@@ -11,10 +11,8 @@ small HTTP endpoints around it for a personal web UI.
 
 import os
 import re
-import time
 import shutil
 import tempfile
-import httpx
 
 import yt_dlp
 from fastapi import FastAPI, HTTPException, Query
@@ -39,15 +37,16 @@ app.add_middleware(
 URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 MAX_URL_LENGTH = 2048
 
-# ⚡ FIXED: Added the mandatory '/get_pot' endpoint suffix
-TOKEN_PROVIDER_URL = "https://my-yt-token-provider.onrender.com/get_pot"
+# Configure the matching bgutil HTTP provider service in Render.
+BGUTIL_URL = os.getenv("BGUTIL_URL", "https://my-yt-token-provider.onrender.com").rstrip("/")
 
-# Shared in-memory micro-cache to optimize performance for your 10 users
-token_cache = {
-    "po_token": None,
-    "visitor_data": None,
-    "expires_at": 0
-}
+
+def youtube_extractor_args():
+    return {
+        "youtube": {"player_client": ["mweb"]},
+        "youtubepot-bgutilhttp": {"base_url": [BGUTIL_URL]},
+    }
+
 
 def validate_url(url: str) -> None:
     if not url or len(url) > MAX_URL_LENGTH or not URL_PATTERN.match(url):
@@ -55,65 +54,6 @@ def validate_url(url: str) -> None:
             status_code=400,
             detail="Please provide a valid http(s) URL.",
         )
-
-def get_valid_youtube_tokens() -> tuple:
-    """
-    Fetches dynamic bot-proof tokens from the companion service.
-    Uses a 60-second local cache to optimize performance.
-    """
-    current_time = time.time()
-    
-    # Reuse cached token if it's still warm
-    if token_cache["po_token"] and current_time < token_cache["expires_at"]:
-        return token_cache["po_token"], token_cache["visitor_data"]
-    
-    try:
-        payload = {"content_binding": "visitor"}
-        
-        with httpx.Client(timeout=15.0) as client:
-            response = client.post(TOKEN_PROVIDER_URL, json=payload)
-            
-            if response.status_code == 200:
-                data = response.json()
-                po_token = data.get("po_token")
-                visitor_data = data.get("visitor_data")
-                
-                if po_token and visitor_data:
-                    # Update local cache
-                    token_cache["po_token"] = po_token
-                    token_cache["visitor_data"] = visitor_data
-                    token_cache["expires_at"] = current_time + 60  # Cache for 60 seconds
-                    return po_token, visitor_data
-            else:
-                print(f"Token Provider returned status {response.status_code}: {response.text}")
-                
-    except Exception as e:
-        print(f"Failed to fetch fresh PO tokens: {e}")
-        
-    return token_cache["po_token"], token_cache["visitor_data"]
-
-def apply_youtube_extractor_args(ydl_opts: dict) -> None:
-    """Helper to cleanly inject live tokens into the yt-dlp options payload."""
-    po_token, visitor_data = get_valid_youtube_tokens()
-    if po_token and visitor_data:
-        ydl_opts['extractor_args'] = {
-            'youtube': {
-                'po_token': [f'mweb+{po_token}'],
-                'visitor_data': [visitor_data],
-                'player_client': ['mweb'],
-                'fetch_pot': ['always']
-            }
-        }
-        print("💡 [yt-dlp] Authenticated mweb request options applied successfully.")
-    else:
-        # ⚡ FIXED: Fallback configurations so unauthenticated routing targets mweb safety profiles
-        ydl_opts['extractor_args'] = {
-            'youtube': {
-                'player_client': ['mweb'],
-                'fetch_pot': ['always']
-            }
-        }
-        print("⚠️ [yt-dlp] Running baseline mweb configuration options (Token provider offline/sleeping).")
 
 @app.get("/health")
 def health():
@@ -124,17 +64,13 @@ def list_formats(url: str = Query(..., description="Video page URL")):
     """Return the title and a clean list of downloadable formats for a URL."""
     validate_url(url)
 
-    # ⚡ FIXED: Added explicit plugin folder directory mapping array here
     ydl_opts = {
         "quiet": True, 
         "skip_download": True, 
         "noplaylist": True,
-        "plugin_dirs": [os.path.join(os.path.dirname(__file__), "yt-dlp-plugins")]
+        "extractor_args": youtube_extractor_args(),
     }
     
-    # Inject dynamic PO Token credentials cleanly
-    apply_youtube_extractor_args(ydl_opts)
-
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -174,18 +110,14 @@ def download(
     tmpdir = tempfile.mkdtemp(prefix="plaindl_")
     outtmpl = os.path.join(tmpdir, "%(title).80s.%(ext)s")
 
-    # ⚡ FIXED: Cleaned up spacing parameters and removed overlapping configurations 
     ydl_opts = {
         "quiet": True,
         "format": format_id,
         "outtmpl": outtmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
-        "plugin_dirs": [os.path.join(os.path.dirname(__file__), "yt-dlp-plugins")]
+        "extractor_args": youtube_extractor_args(),
     }
-
-    # Inject dynamic PO Token credentials for the download phase smoothly
-    apply_youtube_extractor_args(ydl_opts)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
